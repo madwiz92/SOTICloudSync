@@ -1,6 +1,6 @@
-# SOTICloudSync
+# Conduit
 
-A self-contained HTTPS file server with a browser UI and direct **server-to-server** file transfer, implemented as a single PowerShell script (`WebFileServerSync.ps1`).
+A self-contained HTTPS file server with a browser UI and direct **server-to-server** file transfer, implemented as a single PowerShell script (`Conduit.ps1`).
 
 It serves a local directory (browse / upload / download / delete) and adds a second pane that connects to **another** instance of this server, letting you copy files directly between the two over HTTPS.
 
@@ -22,16 +22,16 @@ It serves a local directory (browse / upload / download / delete) and adds a sec
 
 ## Quick deploy (one-liner)
 
-The repo ships an `install.ps1` bootstrapper that self-elevates, ensures PowerShell 7 is installed, downloads the latest `WebFileServerSync.ps1`, and runs it. Paste this into **any** PowerShell on the target server (Windows PowerShell 5.1 or 7 — it handles the rest):
+The repo ships an `install.ps1` bootstrapper that self-elevates, ensures PowerShell 7 is installed, downloads the latest `Conduit.ps1`, and runs it. Paste this into **any** PowerShell on the target server (Windows PowerShell 5.1 or 7 — it handles the rest):
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\soticloudsync-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/SOTICloudSync/main/install.ps1 -OutFile $i -UseBasicParsing; & $i
+Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\conduit-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/Conduit/main/install.ps1 -OutFile $i -UseBasicParsing; & $i
 ```
 
-Install it as an **auto-start scheduled task** (runs as SYSTEM at boot, logs to `%ProgramData%\SOTICloudSync\SOTICloudSync.log`) by adding `-AsTask`:
+Install it as an **auto-start scheduled task** (runs as SYSTEM at boot, logs to `%ProgramData%\Conduit\Conduit.log`) by adding `-AsTask`:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\soticloudsync-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/SOTICloudSync/main/install.ps1 -OutFile $i -UseBasicParsing; & $i -AsTask
+Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\conduit-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/Conduit/main/install.ps1 -OutFile $i -UseBasicParsing; & $i -AsTask
 ```
 
 ### Installer options
@@ -44,14 +44,14 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\soticloudsync-in
 | `-NoStart` | Download/install only; don't launch. |
 | `-Uninstall` | Remove the scheduled task and install directory. |
 | `-Ref <branch\|tag>` | Pull from a specific branch or tag (default `main`). Pin to a tag for stable rollouts. |
-| `-InstallDir <path>` | Install location (default `%ProgramData%\SOTICloudSync`). |
+| `-InstallDir <path>` | Install location (default `%ProgramData%\Conduit`). |
 
 > For `-AsTask`, supply `-Password` (the task runs head-less, so a server-generated password would never be shown). If you omit it, the installer generates one and prints it once during install.
 
 ## Usage (manual)
 
 ```powershell
-.\WebFileServerSync.ps1
+.\Conduit.ps1
 ```
 
 ### Parameters

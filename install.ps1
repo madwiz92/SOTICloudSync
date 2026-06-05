@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Bootstrap installer for SOTICloudSync (WebFileServerSync.ps1).
+    Bootstrap installer for Conduit (Conduit.ps1).
 
 .DESCRIPTION
     One-command deployment. This installer:
@@ -11,7 +11,7 @@
          pwsh (PATH, the App Paths registry, and the usual install directories) and
          re-launches itself under it. Only if none is found does it download/install
          PowerShell 7 - via winget, falling back to Microsoft's official MSI installer.
-      3. Downloads the latest WebFileServerSync.ps1 from GitHub to a stable path.
+      3. Downloads the latest Conduit.ps1 from GitHub to a stable path.
       4. Either runs the server now, or registers a scheduled task that starts it at
          boot (running as SYSTEM, highest privileges, output logged to a file).
 
@@ -21,7 +21,7 @@
     Git branch or tag to download from. Default 'main'. Pin to a tag for stable rollouts.
 
 .PARAMETER InstallDir
-    Where the script (and task log) live. Default "$env:ProgramData\SOTICloudSync".
+    Where the script (and task log) live. Default "$env:ProgramData\Conduit".
 
 .PARAMETER AsTask
     Register + start a scheduled task (SYSTEM, at startup) instead of running in this console.
@@ -33,31 +33,31 @@
     Remove the scheduled task and the install directory, then exit.
 
 .PARAMETER RootDirectory
-    Passed through to WebFileServerSync.ps1 (directory whose files are served).
+    Passed through to Conduit.ps1 (directory whose files are served).
 
 .PARAMETER Port
-    Passed through to WebFileServerSync.ps1 (HTTPS port; omit for auto-select).
+    Passed through to Conduit.ps1 (HTTPS port; omit for auto-select).
 
 .PARAMETER Username
-    Passed through to WebFileServerSync.ps1 (Basic-auth username).
+    Passed through to Conduit.ps1 (Basic-auth username).
 
 .PARAMETER Password
-    Passed through to WebFileServerSync.ps1 (Basic-auth password). For -AsTask, if
+    Passed through to Conduit.ps1 (Basic-auth password). For -AsTask, if
     omitted the installer generates one and prints it (a task runs head-less, so a
     password the server would otherwise print to the console would be lost).
 
 .EXAMPLE
     # Run interactively (ensures pwsh 7, downloads, starts the server in this window):
-    Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\soticloudsync-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/SOTICloudSync/main/install.ps1 -OutFile $i -UseBasicParsing; & $i
+    Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\conduit-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/Conduit/main/install.ps1 -OutFile $i -UseBasicParsing; & $i
 
 .EXAMPLE
     # Install as an auto-start scheduled task:
-    Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\soticloudsync-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/SOTICloudSync/main/install.ps1 -OutFile $i -UseBasicParsing; & $i -AsTask
+    Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\conduit-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/Conduit/main/install.ps1 -OutFile $i -UseBasicParsing; & $i -AsTask
 #>
 [CmdletBinding()]
 param(
     [string]$Ref          = 'main',
-    [string]$InstallDir   = "$env:ProgramData\SOTICloudSync",
+    [string]$InstallDir   = "$env:ProgramData\Conduit",
     [switch]$AsTask,
     [switch]$NoStart,
     [switch]$Uninstall,
@@ -69,12 +69,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Repo       = 'madwiz92/SOTICloudSync'
-$ScriptName = 'WebFileServerSync.ps1'
+$Repo       = 'madwiz92/Conduit'
+$ScriptName = 'Conduit.ps1'
 $RawUrl     = "https://raw.githubusercontent.com/$Repo/$Ref/$ScriptName"
 $Target     = Join-Path $InstallDir $ScriptName
-$LogFile    = Join-Path $InstallDir 'SOTICloudSync.log'
-$TaskName   = 'SOTICloudSync'
+$LogFile    = Join-Path $InstallDir 'Conduit.log'
+$TaskName   = 'Conduit'
 
 function Write-Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 
@@ -208,7 +208,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 Invoke-WebRequest -Uri $RawUrl -OutFile $Target -UseBasicParsing
 
 # ---------------------------------------------------------------------------
-# 5. Collect pass-through parameters for WebFileServerSync.ps1.
+# 5. Collect pass-through parameters for Conduit.ps1.
 #    Only forward what the caller explicitly supplied (defaults stay in the script).
 # ---------------------------------------------------------------------------
 $pass = [ordered]@{}
@@ -256,7 +256,7 @@ if ($AsTask) {
 # ---------------------------------------------------------------------------
 # 6b. Interactive mode: run the server in this console (Ctrl+C to stop).
 # ---------------------------------------------------------------------------
-Write-Step "Starting SOTICloudSync (Ctrl+C to stop)..."
+Write-Step "Starting Conduit (Ctrl+C to stop)..."
 $runArgs = New-Object System.Collections.Generic.List[string]
 $runArgs.AddRange([string[]]@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Target))
 foreach ($k in $pass.Keys) { $runArgs.Add("-$k"); $runArgs.Add($pass[$k]) }

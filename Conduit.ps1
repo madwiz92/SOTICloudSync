@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    WebFileServerSync.ps1 - HTTPS file server with browser UI and server-to-server transfer.
+    Conduit.ps1 - HTTPS file server with browser UI and server-to-server transfer.
 
 .DESCRIPTION
-    Same self-contained HTTPS file server as WebFileServer.ps1 (browse / upload /
+    Same self-contained HTTPS file server (browse / upload /
     download / delete a local directory), plus a second pane that connects to ANOTHER
     instance of this server and transfers files directly between the two.
 
@@ -35,7 +35,7 @@
     generated and printed to the console at startup.
 
 .EXAMPLE
-    .\WebFileServerSync.ps1
+    .\Conduit.ps1
 #>
 
 param(
@@ -104,7 +104,7 @@ function Write-Banner {
     # in a bright colour, so they can be triple-clicked and copied cleanly.
     Write-Host ""
     Write-Host $line -ForegroundColor Cyan
-    Write-Host "  WebFileServerSync is running" -ForegroundColor Cyan
+    Write-Host "  Conduit is running" -ForegroundColor Cyan
     Write-Host $line -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  URL (open in a browser):" -ForegroundColor DarkGray
@@ -303,7 +303,7 @@ catch {
 # ----------------------------------------------------------------------------
 
 $FirewallManagedPort = 5496
-$FirewallRuleName    = "WebFileServer-5496"
+$FirewallRuleName    = "Conduit-5496"
 $FirewallRuleCreated = $false
 
 function Test-FirewallPortOpen {
@@ -359,7 +359,7 @@ $IndexHtml = @'
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>File Server</title>
+<title>Conduit</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -425,7 +425,7 @@ $IndexHtml = @'
 </head>
 <body>
 <header>
-  <div class="title">&#128193; File Server <span class="hostname" id="host"></span></div>
+  <div class="title">&#128193; Conduit <span class="hostname" id="host"></span></div>
   <div class="netmeter">
     <span class="meta" id="netLabel" style="color:#9aa5b1; min-width:64px; text-align:right">idle</span>
     <canvas id="netGraph" width="120" height="28" title="Network throughput"></canvas>
@@ -485,7 +485,7 @@ $IndexHtml = @'
     </h2>
     <div class="body">
       <div class="empty" id="remoteDisconnected">
-        Connect to another File Server to browse and transfer its files.
+        Connect to another Conduit to browse and transfer its files.
       </div>
       <div id="remoteConnected" style="display:none">
         <div class="progress" id="remoteProgress"><div id="remoteBar"></div></div>
@@ -1520,7 +1520,7 @@ $RequestHandler = {
                 Send-Text $resp 'Expected multipart/form-data.' 'text/plain' 400; $status = 400
             } else {
                 $boundary = $matches[1].Trim().Trim('"')
-                $tempDir  = Join-Path ([System.IO.Path]::GetTempPath()) ("wfs_" + [Guid]::NewGuid().ToString('N'))
+                $tempDir  = Join-Path ([System.IO.Path]::GetTempPath()) ("conduit_" + [Guid]::NewGuid().ToString('N'))
                 New-Item -ItemType Directory -Path $tempDir | Out-Null
                 $tempFull = [System.IO.Path]::GetFullPath($tempDir)
                 $client = New-RemoteClient -Password $remPass -AllowInsecure $remInsecure
