@@ -462,6 +462,12 @@ $IndexHtml = @'
   .modal input { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #cbd2d9;
                  border-radius: 5px; font-size: 14px; }
   .modal .hint { font-size: 12px; color: #616e7c; margin-bottom: 10px; }
+  .crumbs { font-size: 12px; color: #616e7c; margin-bottom: 10px; }
+  .crumbs a { color: #3b82f6; cursor: pointer; text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+  .crumbs .note { color: #9aa5b1; }
+  a.dirlink { color: #3b82f6; cursor: pointer; text-decoration: none; }
+  a.dirlink:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -481,11 +487,12 @@ $IndexHtml = @'
         <span class="meta" id="localSummary"></span>
         <span class="meta">&#128193; <code>__ROOTDIR__</code></span></span>
       <span class="acts">
-        <button class="btn" onclick="pickUpload('local')">&#11014; Upload</button>
+        <button class="btn" id="localUploadBtn" onclick="pickUpload('local')">&#11014; Upload</button>
         <button class="btn-light" onclick="loadLocal()" title="Refresh">&#8634;</button>
       </span>
     </h2>
     <div class="body">
+      <div class="crumbs" id="localCrumbs"></div>
       <div class="progress" id="localProgress"><div id="localBar"></div></div>
       <table>
         <thead><tr>
@@ -516,7 +523,7 @@ $IndexHtml = @'
       <span class="left">Remote: <span class="hostname2" id="remoteHost">(not connected)</span>
         <span class="meta" id="remoteSummary"></span></span>
       <span class="acts" id="remoteActions" style="display:none">
-        <button class="btn" onclick="pickUpload('remote')">&#11014; Upload</button>
+        <button class="btn" id="remoteUploadBtn" onclick="pickUpload('remote')">&#11014; Upload</button>
         <button class="btn-light" onclick="loadRemote()" title="Refresh">&#8634;</button>
         <button class="btn-light" onclick="disconnectRemote()">Disconnect</button>
       </span>
@@ -529,6 +536,7 @@ $IndexHtml = @'
         Connect to another Conduit to browse and transfer its files.
       </div>
       <div id="remoteConnected" style="display:none">
+        <div class="crumbs" id="remoteCrumbs"></div>
         <div class="progress" id="remoteProgress"><div id="remoteBar"></div></div>
         <table>
           <thead><tr>
@@ -575,6 +583,37 @@ $IndexHtml = @'
 "use strict";
 const shortName = h => (h || '').split('.')[0].toUpperCase();
 document.getElementById('host').textContent = shortName(location.hostname);
+
+// Current folder per pane ('' = root). Remote path persists across reloads.
+const paths = { local: '', remote: sessionStorage.getItem('remotePath') || '' };
+function setPanePath(which, p) {
+  paths[which] = p;
+  if (which === 'remote') {
+    if (p) sessionStorage.setItem('remotePath', p); else sessionStorage.removeItem('remotePath');
+  }
+  which === 'local' ? loadLocal() : loadRemote();
+}
+function navInto(which, name) { setPanePath(which, paths[which] ? paths[which] + '/' + name : name); }
+function navTo(which, p) { setPanePath(which, p); }
+function renderCrumbs(which) {
+  const el = document.getElementById(which + 'Crumbs');
+  if (!el) return;
+  const p = paths[which];
+  let html = '<a onclick="navTo(\'' + which + '\',\'\')">Root</a>';
+  let acc = '';
+  (p ? p.split('/') : []).forEach(s => {
+    acc = acc ? acc + '/' + s : s;
+    html += ' / <a onclick="navTo(\'' + which + '\',\'' + escapeJs(acc) + '\')">' + escapeHtml(s) + '</a>';
+  });
+  if (p) html += ' <span class="note">&mdash; viewing (upload/transfer/delete available at Root)</span>';
+  el.innerHTML = html;
+}
+// Folder write ops aren't folder-aware yet: gate upload + transfer to the root.
+function updateFolderState() {
+  const lu = document.getElementById('localUploadBtn');  if (lu) lu.disabled = paths.local !== '';
+  const ru = document.getElementById('remoteUploadBtn'); if (ru) ru.disabled = paths.remote !== '';
+  updateArrows();
+}
 document.getElementById('localHost').textContent = shortName(location.hostname);
 
 // ----- helpers -------------------------------------------------------------
@@ -680,9 +719,9 @@ async function tryRemoteConnect(insecure) {
   try {
     const res = await apiFetch('/remote/list', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: c.url, password: c.password, insecure: insecure, resolvedIp: c.resolvedIp })
+      body: JSON.stringify({ url: c.url, password: c.password, insecure: insecure, resolvedIp: c.resolvedIp, path: paths.remote })
     });
-    if (res.ok) { renderTable('remote', await res.json()); return 'ok'; }
+    if (res.ok) { renderTable('remote', await res.json()); renderCrumbs('remote'); updateFolderState(); return 'ok'; }
     if (res.status === 526) return 'cert';   // server's cert-error signal
     if (res.status === 523) return 'dns';    // server couldn't resolve the FQDN
     return 'fail';
@@ -724,6 +763,7 @@ async function submitConnect() {
   sessionStorage.setItem('remoteUrl', url);
   sessionStorage.setItem('remotePass', pass);
   sessionStorage.removeItem('remoteInsecure');
+  paths.remote = ''; sessionStorage.removeItem('remotePath');   // start a fresh connection at root
 
   let result = await tryRemoteConnect(false);
 
@@ -764,7 +804,8 @@ async function submitConnect() {
   clearRemoteCreds();
 }
 function disconnectRemote() {
-  sessionStorage.removeItem('remoteUrl'); sessionStorage.removeItem('remotePass'); sessionStorage.removeItem('remoteInsecure'); sessionStorage.removeItem('remoteResolvedIp');
+  sessionStorage.removeItem('remoteUrl'); sessionStorage.removeItem('remotePass'); sessionStorage.removeItem('remoteInsecure'); sessionStorage.removeItem('remoteResolvedIp'); sessionStorage.removeItem('remotePath');
+  paths.remote = '';
   document.getElementById('remoteRows').innerHTML = '';
   document.getElementById('remoteHost').textContent = '(not connected)';
   document.getElementById('remoteSummary').textContent = '';
@@ -784,32 +825,49 @@ function setRemoteUi(connected) {
 }
 
 // ----- rendering a file table ---------------------------------------------
-function renderTable(which, files) {
+function renderTable(which, entries) {
   const tbody = document.getElementById(which + 'Rows');
   tbody.innerHTML = '';
-  let total = 0;
-  (files || []).forEach(f => {
+  const atRoot = paths[which] === '';
+  let totalSize = 0, fileCount = 0, dirCount = 0;
+  (entries || []).forEach(f => {
     if (!f || typeof f.name !== 'string') return;
-    total += (f.size || 0);
-    const enc = encodeURIComponent(f.name);
     const tr = document.createElement('tr');
-    let actions = '';
-    if (which === 'local') {
-      actions = '<a class="btn-light" style="text-decoration:none;padding:5px 10px;border-radius:5px" href="/files/' + enc + '" download>&#11015;</a> ';
+    if (f.type === 'dir') {
+      dirCount++;
+      tr.innerHTML =
+        '<td class="chk"></td>' +
+        '<td>&#128193; <a class="dirlink" onclick="navInto(\'' + which + '\',\'' + escapeJs(f.name) + '\')">' + escapeHtml(f.name) + '</a></td>' +
+        '<td>&mdash;</td>' +
+        '<td>' + (f.modified ? new Date(f.modified).toLocaleString() : '') + '</td>' +
+        '<td class="actions"></td>';
+    } else {
+      fileCount++; totalSize += (f.size || 0);
+      const rel = (paths[which] ? paths[which] + '/' : '') + f.name;
+      const encPath = rel.split('/').map(encodeURIComponent).join('/');
+      let actions = '';
+      if (which === 'local') {
+        actions += '<a class="btn-light" style="text-decoration:none;padding:5px 10px;border-radius:5px" href="/files/' + encPath + '" download>&#11015;</a> ';
+      }
+      if (atRoot) {
+        actions += '<button class="btn-danger" onclick="delFile(\'' + which + '\',\'' + escapeJs(f.name) + '\')">&#128465;</button>';
+      }
+      const chk = atRoot ? '<input type="checkbox" class="sel" data-name="' + escapeHtml(f.name) + '">' : '';
+      tr.innerHTML =
+        '<td class="chk">' + chk + '</td>' +
+        '<td>' + escapeHtml(f.name) + '</td>' +
+        '<td>' + fmtSize(f.size) + '</td>' +
+        '<td>' + (f.modified ? new Date(f.modified).toLocaleString() : '') + '</td>' +
+        '<td class="actions">' + actions + '</td>';
     }
-    actions += '<button class="btn-danger" onclick="delFile(\'' + which + '\',\'' + escapeJs(f.name) + '\')">&#128465;</button>';
-    tr.innerHTML =
-      '<td class="chk"><input type="checkbox" class="sel" data-name="' + escapeHtml(f.name) + '"></td>' +
-      '<td>' + escapeHtml(f.name) + '</td>' +
-      '<td>' + fmtSize(f.size) + '</td>' +
-      '<td>' + (f.modified ? new Date(f.modified).toLocaleString() : '') + '</td>' +
-      '<td class="actions">' + actions + '</td>';
     tbody.appendChild(tr);
   });
-  const n = tbody.querySelectorAll('tr').length;
+  const n = fileCount + dirCount;
   document.getElementById(which + 'Empty').style.display = n ? 'none' : 'block';
-  document.getElementById(which + 'Summary').textContent =
-    '(' + n + ' file' + (n === 1 ? '' : 's') + ', ' + fmtSize(total) + ')';
+  let summary = '(' + fileCount + ' file' + (fileCount === 1 ? '' : 's');
+  if (dirCount) summary += ', ' + dirCount + ' folder' + (dirCount === 1 ? '' : 's');
+  summary += ', ' + fmtSize(totalSize) + ')';
+  document.getElementById(which + 'Summary').textContent = summary;
   const all = document.getElementById(which + 'All'); if (all) all.checked = false;
 }
 
@@ -825,9 +883,10 @@ function toggleAll(which) {
 // ----- load listings -------------------------------------------------------
 async function loadLocal() {
   try {
-    const res = await apiFetch('/list?_=' + Date.now());
+    const res = await apiFetch('/list?path=' + encodeURIComponent(paths.local) + '&_=' + Date.now());
     if (!res.ok) return;
     renderTable('local', await res.json());
+    renderCrumbs('local'); updateFolderState();
   } catch (e) { /* 401 handled in apiFetch */ }
 }
 
@@ -840,10 +899,11 @@ async function loadRemote() {
     const res = await apiFetch('/remote/list', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: c.url, password: c.password, insecure: c.insecure, resolvedIp: c.resolvedIp })
+      body: JSON.stringify({ url: c.url, password: c.password, insecure: c.insecure, resolvedIp: c.resolvedIp, path: paths.remote })
     });
     if (!res.ok) { msg.className = 'msg err'; msg.textContent = 'Remote error: ' + (await res.text()); return false; }
     renderTable('remote', await res.json());
+    renderCrumbs('remote'); updateFolderState();
     msg.textContent = '';
     setRemoteUi(true);
     return true;
@@ -963,9 +1023,14 @@ async function pollXfer(jobId, bar, xm) {
 }
 
 function updateArrows() {
-  const on = remoteConnected();
-  document.getElementById('pushBtn').disabled = !on;
-  document.getElementById('pullBtn').disabled = !on;
+  // Folder-aware transfer is a later step; only allow transfers when both panes are at root.
+  const atRoot = paths.local === '' && paths.remote === '';
+  const on = remoteConnected() && atRoot;
+  const push = document.getElementById('pushBtn'), pull = document.getElementById('pullBtn');
+  push.disabled = !on; pull.disabled = !on;
+  const tip = (remoteConnected() && !atRoot) ? 'Transfer from the root for now (folder transfer coming soon)' : '';
+  push.title = tip || 'Copy selected Local files to Remote';
+  pull.title = tip || 'Copy selected Remote files to Local';
 }
 
 // ----- uploads (per pane) --------------------------------------------------
@@ -974,6 +1039,7 @@ document.getElementById('remoteFile').addEventListener('change', e => doUpload('
 
 function pickUpload(which) {
   if (which === 'remote' && !remoteConnected()) { alert('Connect to a remote server first.'); return; }
+  if (paths[which] !== '') { alert('Upload into subfolders is coming soon. Navigate to Root to upload.'); return; }
   document.getElementById(which + 'File').click();
 }
 
@@ -1031,7 +1097,7 @@ function doUpload(which, fileList) {
 // ----- init ----------------------------------------------------------------
 loadLocal();
 if (remoteConnected()) { setRemoteUi(true); loadRemote(); } else { setRemoteUi(false); }
-updateArrows();
+updateFolderState();
 </script>
 </body>
 </html>
@@ -1144,13 +1210,67 @@ $RequestHandler = {
     }
 
     # --- path safety -------------------------------------------------------
+    # Resolve a client-supplied RELATIVE path (may be nested, e.g. "a/b/c") to a full
+    # path inside the root. Allows subfolders; rejects traversal (.., rooted/absolute,
+    # drive-relative, UNC) and anything resolving outside root. Empty/whitespace means
+    # the root directory itself. Returns the normalized absolute path, or $null if unsafe.
     function Resolve-SafePath {
-        param($root, $rootFull, $name)
-        $name = [System.IO.Path]::GetFileName($name)
-        if ([string]::IsNullOrWhiteSpace($name)) { return $null }
-        $full = [System.IO.Path]::GetFullPath((Join-Path $root $name))
-        if (-not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+        param($root, $rootFull, $relPath)
+        if ($null -eq $relPath) { return $null }
+        $rel = ([string]$relPath).Replace('/', '\')
+        if ($rel -match '^[\\]')           { return $null }   # rooted / UNC (\x, \\server)
+        if ($rel -match '^[A-Za-z]:')      { return $null }   # absolute or drive-relative
+        if ($rel -match '(^|\\)\.\.(\\|$)'){ return $null }   # any .. traversal segment
+        $rel = $rel.Trim().Trim('\')
+        if ($rel -eq '') { return $rootFull }                 # the root itself
+        $full = [System.IO.Path]::GetFullPath((Join-Path $rootFull $rel))
+        # Boundary check with a trailing separator so "C:\cloud" can't match "C:\cloudX".
+        $rootWithSep = $rootFull.TrimEnd('\') + '\'
+        if ($full -ne $rootFull -and -not $full.StartsWith($rootWithSep, [StringComparison]::OrdinalIgnoreCase)) { return $null }
         return $full
+    }
+
+    # Immediate children of a directory: files and folders, skipping reparse points
+    # (symlinks/junctions). Folders report no size. Sorted dirs-first, then by name.
+    function Get-ChildEntries {
+        param([string]$full)
+        $di = [System.IO.DirectoryInfo]::new($full)
+        $entries = New-Object System.Collections.ArrayList
+        foreach ($e in $di.EnumerateFileSystemInfos()) {
+            if (($e.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+            $isDir = ($e.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+            [void]$entries.Add([pscustomobject]@{
+                name     = $e.Name
+                type     = if ($isDir) { 'dir' } else { 'file' }
+                size     = if ($isDir) { $null } else { ([System.IO.FileInfo]$e).Length }
+                modified = $e.LastWriteTimeUtc.ToString('o')
+            })
+        }
+        return @($entries | Sort-Object @{ Expression = { $_.type -eq 'file' } }, @{ Expression = { $_.name } })
+    }
+
+    # Recursively enumerate a directory, skipping reparse points. Returns entries with a
+    # path RELATIVE to $baseFull, including directories (so empty folders are preserved).
+    function Get-TreeEntries {
+        param([string]$baseFull)
+        $results = New-Object System.Collections.ArrayList
+        $stack = New-Object System.Collections.Stack
+        $stack.Push($baseFull)
+        $baseLen = ($baseFull.TrimEnd('\')).Length + 1
+        while ($stack.Count -gt 0) {
+            $dir = $stack.Pop()
+            foreach ($e in ([System.IO.DirectoryInfo]::new($dir)).EnumerateFileSystemInfos()) {
+                if (($e.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                $rel = $e.FullName.Substring($baseLen)
+                if (($e.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                    [void]$results.Add([pscustomobject]@{ path = $rel; type = 'dir'; size = $null })
+                    $stack.Push($e.FullName)
+                } else {
+                    [void]$results.Add([pscustomobject]@{ path = $rel; type = 'file'; size = ([System.IO.FileInfo]$e).Length })
+                }
+            }
+        }
+        return @($results)
     }
 
     # --- streaming multipart/form-data parser ------------------------------
@@ -1348,18 +1468,38 @@ $RequestHandler = {
             $status = 200
         }
         elseif ($method -eq 'GET' -and $path -eq '/list') {
-            $items = @(Get-ChildItem -LiteralPath $cfg.RootDirectory -File -ErrorAction SilentlyContinue |
-                ForEach-Object {
-                    [pscustomobject]@{ name = $_.Name; size = $_.Length; modified = $_.LastWriteTimeUtc.ToString('o') }
-                })
-            if ($items.Count -eq 0) { $json = '[]' }
-            else {
-                $json = ConvertTo-Json -InputObject $items -Depth 5 -Compress
-                if (-not $json.StartsWith('[')) { $json = "[$json]" }
+            $dir = Resolve-SafePath $cfg.RootDirectory $cfg.RootFull ([string]$req.QueryString['path'])
+            if ($null -eq $dir -or -not (Test-Path -LiteralPath $dir -PathType Container)) {
+                $resp.AddHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+                Send-Text $resp '[]' 'application/json' 200; $status = 200
+            } else {
+                $items = @(Get-ChildEntries $dir)
+                if ($items.Count -eq 0) { $json = '[]' }
+                else {
+                    $json = ConvertTo-Json -InputObject $items -Depth 5 -Compress
+                    if (-not $json.StartsWith('[')) { $json = "[$json]" }
+                }
+                $resp.AddHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
+                Send-Text $resp $json 'application/json' 200
+                $status = 200
             }
-            $resp.AddHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
-            Send-Text $resp $json 'application/json' 200
-            $status = 200
+        }
+        elseif ($method -eq 'GET' -and $path -eq '/listtree') {
+            # Recursive listing (relative paths + sizes, dirs included) for a subtree.
+            $dir = Resolve-SafePath $cfg.RootDirectory $cfg.RootFull ([string]$req.QueryString['path'])
+            if ($null -eq $dir -or -not (Test-Path -LiteralPath $dir -PathType Container)) {
+                Send-Text $resp '[]' 'application/json' 200; $status = 200
+            } else {
+                $items = @(Get-TreeEntries $dir)
+                if ($items.Count -eq 0) { $json = '[]' }
+                else {
+                    $json = ConvertTo-Json -InputObject $items -Depth 5 -Compress
+                    if (-not $json.StartsWith('[')) { $json = "[$json]" }
+                }
+                $resp.AddHeader('Cache-Control', 'no-store')
+                Send-Text $resp $json 'application/json' 200
+                $status = 200
+            }
         }
         elseif ($path.StartsWith('/files/')) {
             $name = [System.Uri]::UnescapeDataString($path.Substring('/files/'.Length))
@@ -1404,9 +1544,10 @@ $RequestHandler = {
             $body = Read-BodyText $req | ConvertFrom-Json
             $base = Get-RemoteBase $body.url
             $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure) -ResolvedIp ([string]$body.resolvedIp)
+            $listQ = if ($body.path) { '?path=' + [System.Uri]::EscapeDataString([string]$body.path) } else { '' }
             try {
                 try {
-                    $r = $client.GetAsync("$base/list").GetAwaiter().GetResult()
+                    $r = $client.GetAsync("$base/list$listQ").GetAwaiter().GetResult()
                 } catch {
                     # Distinguish a TLS/certificate failure so the browser can offer to
                     # retry with the mismatch accepted (status 526 = our cert-error signal).
