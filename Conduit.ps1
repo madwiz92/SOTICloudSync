@@ -110,10 +110,7 @@ function Write-Banner {
     Write-Host "  URL (open in a browser):" -ForegroundColor DarkGray
     Write-Host $Url      -ForegroundColor Green
     Write-Host ""
-    Write-Host "  Username:" -ForegroundColor DarkGray
-    Write-Host $Username -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  Password:" -ForegroundColor DarkGray
+    Write-Host "  Password (login is password-only):" -ForegroundColor DarkGray
     Write-Host $Pass     -ForegroundColor Yellow
     Write-Host ""
     Write-Host $line -ForegroundColor Cyan
@@ -511,7 +508,6 @@ $IndexHtml = @'
 <div class="modal-bg" id="loginModal">
   <div class="modal">
     <h3>Sign in</h3>
-    <input type="text" id="loginUser" placeholder="Username" autocomplete="username">
     <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password">
     <button class="btn" style="width:100%" onclick="submitLogin()">Sign in</button>
     <div class="msg err" id="loginErr"></div>
@@ -522,7 +518,7 @@ $IndexHtml = @'
 <div class="modal-bg" id="connectModal">
   <div class="modal">
     <h3>Connect to a server</h3>
-    <div class="hint">Username is <b>admin</b>. Enter the other server's URL and password.</div>
+    <div class="hint">Enter the other server's URL and password.</div>
     <input type="text" id="connUrl" placeholder="https://hostname.mobicontrol.cloud:5496">
     <input type="password" id="connPass" placeholder="Password">
     <button class="btn" style="width:100%" onclick="submitConnect()">Connect</button>
@@ -592,13 +588,13 @@ let loginResolve = null;
 function promptLogin() {
   document.getElementById('loginErr').textContent = '';
   document.getElementById('loginModal').style.display = 'flex';
-  document.getElementById('loginUser').focus();
+  document.getElementById('loginPass').focus();
   return new Promise(resolve => { loginResolve = resolve; });
 }
 function submitLogin() {
-  const u = document.getElementById('loginUser').value;
+  // Password-only: the server ignores the username, so send a fixed placeholder.
   const p = document.getElementById('loginPass').value;
-  sessionStorage.setItem('auth', 'Basic ' + btoa(u + ':' + p));
+  sessionStorage.setItem('auth', 'Basic ' + btoa('admin:' + p));
   document.getElementById('loginModal').style.display = 'none';
   if (loginResolve) { const r = loginResolve; loginResolve = null; r(); }
 }
@@ -1037,7 +1033,9 @@ $RequestHandler = {
         } catch { return $false }
         $idx = $raw.IndexOf(':')
         if ($idx -lt 0) { return $false }
-        return ($raw.Substring(0, $idx) -ceq $cfg.Username -and $raw.Substring($idx + 1) -ceq $cfg.Password)
+        # Password-only auth: the username is ignored (single shared credential),
+        # so the only secret that matters is the password.
+        return ($raw.Substring($idx + 1) -ceq $cfg.Password)
     }
 
     # --- path safety -------------------------------------------------------

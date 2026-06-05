@@ -6,7 +6,7 @@ It serves a local directory (browse / upload / download / delete) and adds a sec
 
 ## Features
 
-- **Browser UI** over HTTPS with Basic auth — browse, upload, download, and delete files in a served directory.
+- **Browser UI** over HTTPS with a **password-only login** — browse, upload, download, and delete files in a served directory.
 - **Server-brokered transfers** — the server pulls/pushes files to a remote peer itself, so there are no browser memory limits and no CORS issues. Transfers *copy* files (the source is kept). Chosen with checkboxes and moved with the center → / ← arrows.
 - **Live throughput meter** and per-transfer progress.
 - **Stop a transfer in progress** — an in-flight transfer can be cancelled in either direction; half-written `.partial` files are cleaned up.
@@ -60,7 +60,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\conduit-install.
 |---|---|---|
 | `-RootDirectory` | `C:\cloud\transfer` | Directory whose files are served. Created if missing. All file I/O is scoped here. |
 | `-Port` | `0` (auto) | TCP port for HTTPS. `0` auto-selects the first free port from `5496, 5494, 443`. |
-| `-Username` | `admin` | HTTP Basic Auth username. |
-| `-Password` | *(random)* | HTTP Basic Auth password. If empty, a random 12-character password is generated and printed at startup. |
+| `-Username` | `admin` | Ignored — login is password-only (kept for compatibility). |
+| `-Password` | *(random)* | The login password. If empty, a random 12-character password is generated and printed at startup. |
 
-On startup the script prints the access URL, username, and password to the console. Open the URL in a browser to use the UI.
+On startup the script prints the access URL and password to the console. Open the URL in a browser and paste the password to sign in.
