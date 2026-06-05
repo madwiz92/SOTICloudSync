@@ -78,6 +78,50 @@ public class ProgressStream : Stream {
 "@
 }
 
+# Compiled helper: builds the HttpMessageHandler used for server-to-server calls.
+# - pinnedIp: when set, the TCP connection is dialed to this IP while the request
+#   URI (and therefore SNI, Host header, and certificate validation) keeps the
+#   original FQDN. This lets a host whose DNS can't resolve the FQDN still connect
+#   - using an IP the browser resolved - WITHOUT weakening TLS: an impostor at that
+#   IP would fail certificate validation against the hostname.
+# - allowInsecure: bypass certificate validation entirely (explicit user consent).
+# Loaded into the AppDomain once; shared by all runspace-pool threads.
+if (-not ('ConduitHttp' -as [type])) {
+Add-Type @"
+using System;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+public static class ConduitHttp {
+    public static HttpMessageHandler CreateHandler(string pinnedIp, bool allowInsecure) {
+        var h = new SocketsHttpHandler();
+        if (!string.IsNullOrEmpty(pinnedIp)) {
+            var ip = IPAddress.Parse(pinnedIp);
+            h.ConnectCallback = async (context, token) => {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                try {
+                    await socket.ConnectAsync(ip, context.DnsEndPoint.Port, token);
+                    return new NetworkStream(socket, true);
+                } catch {
+                    socket.Dispose();
+                    throw;
+                }
+            };
+        }
+        if (allowInsecure) {
+            h.SslOptions.RemoteCertificateValidationCallback =
+                (sender, cert, chain, errors) => true;
+        }
+        return h;
+    }
+}
+"@
+}
+
 # ----------------------------------------------------------------------------
 # Console / logging helpers (main thread)
 # ----------------------------------------------------------------------------
@@ -615,7 +659,8 @@ function remoteCreds() {
   return {
     url: sessionStorage.getItem('remoteUrl'),
     password: sessionStorage.getItem('remotePass'),
-    insecure: sessionStorage.getItem('remoteInsecure') === '1'
+    insecure: sessionStorage.getItem('remoteInsecure') === '1',
+    resolvedIp: sessionStorage.getItem('remoteResolvedIp') || ''
   };
 }
 function remoteConnected() { return !!sessionStorage.getItem('remoteUrl'); }
@@ -635,7 +680,7 @@ async function tryRemoteConnect(insecure) {
   try {
     const res = await apiFetch('/remote/list', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: c.url, password: c.password, insecure: insecure })
+      body: JSON.stringify({ url: c.url, password: c.password, insecure: insecure, resolvedIp: c.resolvedIp })
     });
     if (res.ok) { renderTable('remote', await res.json()); return 'ok'; }
     if (res.status === 526) return 'cert';   // server's cert-error signal
@@ -668,6 +713,7 @@ function clearRemoteCreds() {
   sessionStorage.removeItem('remoteUrl');
   sessionStorage.removeItem('remotePass');
   sessionStorage.removeItem('remoteInsecure');
+  sessionStorage.removeItem('remoteResolvedIp');
 }
 
 async function submitConnect() {
@@ -682,8 +728,8 @@ async function submitConnect() {
   let result = await tryRemoteConnect(false);
 
   // DNS workaround: the Conduit host can't resolve the FQDN. Resolve it in the
-  // browser (DNS-over-HTTPS) and retry against the IP. Connecting by IP can't
-  // match a hostname certificate, so this path proceeds insecurely (with consent).
+  // browser (DNS-over-HTTPS) and pin that IP for the connection, while keeping the
+  // FQDN so TLS/certificate validation still happens against the hostname.
   if (result === 'dns') {
     let host = '';
     try { host = new URL(url).hostname; } catch (e) {}
@@ -694,15 +740,12 @@ async function submitConnect() {
     }
     const proceed = confirm(
       'The server hosting Conduit cannot resolve "' + host + '" via its own DNS.\n\n' +
-      'Your browser resolved it to ' + ip + '. Conduit can connect to that IP directly, but the ' +
-      'remote certificate will not match an IP address.\n\nContinue using ' + ip + '?');
+      'Your browser resolved it to ' + ip + '. Conduit will connect to that IP while still ' +
+      'verifying the certificate against "' + host + '".\n\nContinue?');
     if (!proceed) { err.textContent = 'Connection cancelled.'; clearRemoteCreds(); return; }
-    let ipUrl = url;
-    try { const u = new URL(url); u.hostname = ip; ipUrl = u.toString().replace(/\/+$/, ''); } catch (e) {}
-    sessionStorage.setItem('remoteUrl', ipUrl);
-    sessionStorage.setItem('remoteInsecure', '1');   // IP can't match a hostname cert
-    result = await tryRemoteConnect(true);
-    if (result !== 'ok') { err.textContent = 'Could not connect to ' + ip + '.'; clearRemoteCreds(); return; }
+    sessionStorage.setItem('remoteResolvedIp', ip);   // keep remoteUrl = FQDN so TLS still validates
+    result = await tryRemoteConnect(false);
+    // If the cert still doesn't match the FQDN, fall through to the cert prompt below.
   }
 
   if (result === 'cert') {
@@ -721,7 +764,7 @@ async function submitConnect() {
   clearRemoteCreds();
 }
 function disconnectRemote() {
-  sessionStorage.removeItem('remoteUrl'); sessionStorage.removeItem('remotePass'); sessionStorage.removeItem('remoteInsecure');
+  sessionStorage.removeItem('remoteUrl'); sessionStorage.removeItem('remotePass'); sessionStorage.removeItem('remoteInsecure'); sessionStorage.removeItem('remoteResolvedIp');
   document.getElementById('remoteRows').innerHTML = '';
   document.getElementById('remoteHost').textContent = '(not connected)';
   document.getElementById('remoteSummary').textContent = '';
@@ -797,7 +840,7 @@ async function loadRemote() {
     const res = await apiFetch('/remote/list', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: c.url, password: c.password, insecure: c.insecure })
+      body: JSON.stringify({ url: c.url, password: c.password, insecure: c.insecure, resolvedIp: c.resolvedIp })
     });
     if (!res.ok) { msg.className = 'msg err'; msg.textContent = 'Remote error: ' + (await res.text()); return false; }
     renderTable('remote', await res.json());
@@ -821,7 +864,7 @@ async function delFile(which, name) {
       const c = remoteCreds();
       res = await apiFetch('/remote/delete', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: c.url, password: c.password, name: name, insecure: c.insecure })
+        body: JSON.stringify({ url: c.url, password: c.password, name: name, insecure: c.insecure, resolvedIp: c.resolvedIp })
       });
     }
     if (res.status === 204) { which === 'local' ? loadLocal() : loadRemote(); }
@@ -857,7 +900,7 @@ async function transfer(direction) {
   try {
     const res = await apiFetch('/remote/transfer', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: c.url, password: c.password, direction: direction, names: names, jobId: jobId, insecure: c.insecure })
+      body: JSON.stringify({ url: c.url, password: c.password, direction: direction, names: names, jobId: jobId, insecure: c.insecure, resolvedIp: c.resolvedIp })
     });
     clearInterval(timer);
     if (!res.ok) {
@@ -951,6 +994,7 @@ function doUpload(which, fileList) {
     xhr.setRequestHeader('X-Remote-Url',  btoa(c.url));
     xhr.setRequestHeader('X-Remote-Pass', btoa(c.password));
     xhr.setRequestHeader('X-Remote-Insecure', c.insecure ? '1' : '0');
+    xhr.setRequestHeader('X-Remote-ResolvedIp', c.resolvedIp || '');
   }
   const auth = sessionStorage.getItem('auth');
   if (auth) xhr.setRequestHeader('Authorization', auth);
@@ -1261,16 +1305,13 @@ $RequestHandler = {
 
     # --- remote (server-to-server) helpers ---------------------------------
     function New-RemoteClient {
-        param([string]$Password, [bool]$AllowInsecure)
+        param([string]$Password, [bool]$AllowInsecure, [string]$ResolvedIp)
         Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
         try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
-        # Strict TLS by default: HttpClientHandler validates the remote certificate.
-        # When the user has explicitly accepted a certificate mismatch (e.g. connecting
-        # by IP to a wildcard-cert server), $AllowInsecure bypasses validation.
-        $handler = [System.Net.Http.HttpClientHandler]::new()
-        if ($AllowInsecure) {
-            $handler.ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator
-        }
+        # Strict TLS by default. $ResolvedIp pins the TCP connection to a browser-
+        # resolved IP while keeping the FQDN for SNI/cert validation (DNS workaround,
+        # TLS preserved). $AllowInsecure bypasses validation entirely (explicit consent).
+        $handler = [ConduitHttp]::CreateHandler($ResolvedIp, $AllowInsecure)
         $client  = [System.Net.Http.HttpClient]::new($handler)
         $client.Timeout = [TimeSpan]::FromHours(12)   # allow very large transfers
         # Password-only auth: the username half is irrelevant (the peer ignores it),
@@ -1362,7 +1403,7 @@ $RequestHandler = {
         elseif ($method -eq 'POST' -and $path -eq '/remote/list') {
             $body = Read-BodyText $req | ConvertFrom-Json
             $base = Get-RemoteBase $body.url
-            $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure)
+            $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure) -ResolvedIp ([string]$body.resolvedIp)
             try {
                 try {
                     $r = $client.GetAsync("$base/list").GetAwaiter().GetResult()
@@ -1395,7 +1436,7 @@ $RequestHandler = {
         elseif ($method -eq 'POST' -and $path -eq '/remote/delete') {
             $body = Read-BodyText $req | ConvertFrom-Json
             $base = Get-RemoteBase $body.url
-            $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure)
+            $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure) -ResolvedIp ([string]$body.resolvedIp)
             try {
                 $enc = [System.Uri]::EscapeDataString([System.IO.Path]::GetFileName([string]$body.name))
                 $msg = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Delete, "$base/files/$enc")
@@ -1423,7 +1464,7 @@ $RequestHandler = {
             $dir   = [string]$body.direction
             $names = @($body.names)
             $jobId = [string]$body.jobId
-            $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure)
+            $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure) -ResolvedIp ([string]$body.resolvedIp)
 
             # Work out the total byte count so the browser can show a percentage.
             $total = [long]0
@@ -1582,6 +1623,7 @@ $RequestHandler = {
             $remUrl  = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($req.Headers['X-Remote-Url']))
             $remPass = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($req.Headers['X-Remote-Pass']))
             $remInsecure = ($req.Headers['X-Remote-Insecure'] -eq '1')
+            $remResolvedIp = [string]$req.Headers['X-Remote-ResolvedIp']
             $base = Get-RemoteBase $remUrl
             $ct = $req.ContentType
             if (-not $ct -or $ct -notmatch 'boundary=(.+)$') {
@@ -1591,7 +1633,7 @@ $RequestHandler = {
                 $tempDir  = Join-Path ([System.IO.Path]::GetTempPath()) ("conduit_" + [Guid]::NewGuid().ToString('N'))
                 New-Item -ItemType Directory -Path $tempDir | Out-Null
                 $tempFull = [System.IO.Path]::GetFullPath($tempDir)
-                $client = New-RemoteClient -Password $remPass -AllowInsecure $remInsecure
+                $client = New-RemoteClient -Password $remPass -AllowInsecure $remInsecure -ResolvedIp $remResolvedIp
                 try {
                     $saved = Save-MultipartFiles $req.InputStream $boundary $tempDir $tempFull
                     $pushed = New-Object System.Collections.ArrayList

@@ -12,7 +12,7 @@ It serves a local directory (browse / upload / download / delete) and adds a sec
 - **Stop a transfer in progress** — an in-flight transfer can be cancelled in either direction; half-written `.partial` files are cleaned up.
 - **Free-space pre-check** — before a transfer starts, the destination volume's free space is verified; the transfer fails fast with a clear message if it won't fit.
 - **TLS certificate handling** — the remote certificate is validated strictly by default. If validation fails (e.g. a name mismatch when connecting directly by IP to a wildcard-cert server), the user is prompted and may choose to continue, which relaxes validation for that connection only.
-- **DNS fallback for remote connections** — if the Conduit host can't resolve a remote's FQDN via its own DNS, the browser resolves it via DNS-over-HTTPS and retries against the IP (with consent, since an IP can't match a hostname certificate).
+- **DNS fallback for remote connections** — if the Conduit host can't resolve a remote's FQDN via its own DNS, the browser resolves it via DNS-over-HTTPS and the server connects to that IP while keeping the FQDN for TLS, so the certificate is **still validated against the hostname** (no security downgrade — a wrong/spoofed IP fails the cert check).
 
 ## Requirements
 
