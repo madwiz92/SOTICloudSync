@@ -28,10 +28,10 @@
     the preferred list (5496, 5494, 443) is auto-selected.
 
 .PARAMETER Username
-    HTTP Basic Auth username. Default "admin".
+    Ignored. Login is password-only; kept only for backwards compatibility.
 
 .PARAMETER Password
-    HTTP Basic Auth password. If empty, a random 12-char alphanumeric password is
+    The login password. If empty, a random 12-char alphanumeric password is
     generated and printed to the console at startup.
 
 .EXAMPLE
@@ -592,9 +592,9 @@ function promptLogin() {
   return new Promise(resolve => { loginResolve = resolve; });
 }
 function submitLogin() {
-  // Password-only: the server ignores the username, so send a fixed placeholder.
+  // Password-only: the server ignores the username, so send an empty username.
   const p = document.getElementById('loginPass').value;
-  sessionStorage.setItem('auth', 'Basic ' + btoa('admin:' + p));
+  sessionStorage.setItem('auth', 'Basic ' + btoa(':' + p));
   document.getElementById('loginModal').style.display = 'none';
   if (loginResolve) { const r = loginResolve; loginResolve = null; r(); }
 }
@@ -1212,7 +1212,9 @@ $RequestHandler = {
         }
         $client  = [System.Net.Http.HttpClient]::new($handler)
         $client.Timeout = [TimeSpan]::FromHours(12)   # allow very large transfers
-        $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("admin:$Password"))
+        # Password-only auth: the username half is irrelevant (the peer ignores it),
+        # so we send an empty username rather than a hardcoded "admin".
+        $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(":$Password"))
         $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Basic', $b64)
         return $client
     }
