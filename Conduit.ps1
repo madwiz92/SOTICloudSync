@@ -639,8 +639,29 @@ async function tryRemoteConnect(insecure) {
     });
     if (res.ok) { renderTable('remote', await res.json()); return 'ok'; }
     if (res.status === 526) return 'cert';   // server's cert-error signal
+    if (res.status === 523) return 'dns';    // server couldn't resolve the FQDN
     return 'fail';
   } catch (e) { return 'fail'; }
+}
+
+// Resolve a hostname to an IPv4 address from the browser via DNS-over-HTTPS.
+// Used as a fallback when the Conduit host's own DNS can't resolve the FQDN.
+// Returns the first A record, or null. Works only for publicly-resolvable names.
+async function resolveDoH(host) {
+  const endpoints = [
+    'https://dns.google/resolve?type=A&name=' + encodeURIComponent(host),
+    'https://cloudflare-dns.com/dns-query?type=A&name=' + encodeURIComponent(host)
+  ];
+  for (const ep of endpoints) {
+    try {
+      const r = await fetch(ep, { headers: { 'Accept': 'application/dns-json' } });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const a = (j.Answer || []).find(x => x.type === 1 && /^\d{1,3}(\.\d{1,3}){3}$/.test(x.data));
+      if (a) return a.data;
+    } catch (e) { /* try next resolver */ }
+  }
+  return null;
 }
 
 function clearRemoteCreds() {
@@ -659,6 +680,31 @@ async function submitConnect() {
   sessionStorage.removeItem('remoteInsecure');
 
   let result = await tryRemoteConnect(false);
+
+  // DNS workaround: the Conduit host can't resolve the FQDN. Resolve it in the
+  // browser (DNS-over-HTTPS) and retry against the IP. Connecting by IP can't
+  // match a hostname certificate, so this path proceeds insecurely (with consent).
+  if (result === 'dns') {
+    let host = '';
+    try { host = new URL(url).hostname; } catch (e) {}
+    const ip = host ? await resolveDoH(host) : null;
+    if (!ip) {
+      err.textContent = 'The Conduit host cannot resolve "' + host + '", and the browser could not resolve it either.';
+      clearRemoteCreds(); return;
+    }
+    const proceed = confirm(
+      'The server hosting Conduit cannot resolve "' + host + '" via its own DNS.\n\n' +
+      'Your browser resolved it to ' + ip + '. Conduit can connect to that IP directly, but the ' +
+      'remote certificate will not match an IP address.\n\nContinue using ' + ip + '?');
+    if (!proceed) { err.textContent = 'Connection cancelled.'; clearRemoteCreds(); return; }
+    let ipUrl = url;
+    try { const u = new URL(url); u.hostname = ip; ipUrl = u.toString().replace(/\/+$/, ''); } catch (e) {}
+    sessionStorage.setItem('remoteUrl', ipUrl);
+    sessionStorage.setItem('remoteInsecure', '1');   // IP can't match a hostname cert
+    result = await tryRemoteConnect(true);
+    if (result !== 'ok') { err.textContent = 'Could not connect to ' + ip + '.'; clearRemoteCreds(); return; }
+  }
+
   if (result === 'cert') {
     const proceed = confirm(
       "The remote server's SSL certificate does not match the address you connected to " +
@@ -1022,6 +1068,21 @@ $RequestHandler = {
         }
         return $false
     }
+    # Walk an exception chain and decide whether the failure was a DNS name-resolution
+    # failure (the host this server runs on can't resolve the remote FQDN).
+    function Test-DnsError {
+        param($ex)
+        $e = $ex
+        while ($e) {
+            if ($e -is [System.Net.Sockets.SocketException] -and
+                $e.SocketErrorCode -eq [System.Net.Sockets.SocketError]::HostNotFound) { return $true }
+            $m = [string]$e.Message
+            if ($m -match 'No such host is known' -or $m -match 'name or service not known' -or
+                $m -match 'nodename nor servname' -or $m -match 'Name does not resolve') { return $true }
+            $e = $e.InnerException
+        }
+        return $false
+    }
 
     # --- auth --------------------------------------------------------------
     function Test-Auth {
@@ -1311,6 +1372,13 @@ $RequestHandler = {
                     if (-not [bool]$body.insecure -and (Test-CertError $_.Exception)) {
                         Send-Json $resp @{ error = 'cert_error'; message = $_.Exception.Message } 526
                         $status = 526
+                        return
+                    }
+                    # Signal a DNS resolution failure (status 523) so the browser can try
+                    # resolving the FQDN itself (DNS-over-HTTPS) and retry against the IP.
+                    if (Test-DnsError $_.Exception) {
+                        Send-Json $resp @{ error = 'dns_error'; message = $_.Exception.Message } 523
+                        $status = 523
                         return
                     }
                     throw
