@@ -1,0 +1,38 @@
+# SOTICloudSync
+
+A self-contained HTTPS file server with a browser UI and direct **server-to-server** file transfer, implemented as a single PowerShell script (`WebFileServerSync.ps1`).
+
+It serves a local directory (browse / upload / download / delete) and adds a second pane that connects to **another** instance of this server, letting you copy files directly between the two over HTTPS.
+
+## Features
+
+- **Browser UI** over HTTPS with Basic auth — browse, upload, download, and delete files in a served directory.
+- **Server-brokered transfers** — the server pulls/pushes files to a remote peer itself, so there are no browser memory limits and no CORS issues. Transfers *copy* files (the source is kept). Chosen with checkboxes and moved with the center → / ← arrows.
+- **Live throughput meter** and per-transfer progress.
+- **Stop a transfer in progress** — an in-flight transfer can be cancelled in either direction; half-written `.partial` files are cleaned up.
+- **Free-space pre-check** — before a transfer starts, the destination volume's free space is verified; the transfer fails fast with a clear message if it won't fit.
+- **TLS certificate handling** — the remote certificate is validated strictly by default. If validation fails (e.g. a name mismatch when connecting directly by IP to a wildcard-cert server), the user is prompted and may choose to continue, which relaxes validation for that connection only.
+
+## Requirements
+
+- **Windows** (10/11 or Server 2019/2022).
+- **PowerShell 7** (`pwsh`).
+- Must be run **as Administrator** (required to bind the HTTPS listener and the SSL certificate).
+- A certificate in `LocalMachine\My` or `CurrentUser\My` whose Subject or SAN matches one of the configured wildcard patterns.
+
+## Usage
+
+```powershell
+.\WebFileServerSync.ps1
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `-RootDirectory` | `C:\cloud\transfer` | Directory whose files are served. Created if missing. All file I/O is scoped here. |
+| `-Port` | `0` (auto) | TCP port for HTTPS. `0` auto-selects the first free port from `5496, 5494, 443`. |
+| `-Username` | `admin` | HTTP Basic Auth username. |
+| `-Password` | *(random)* | HTTP Basic Auth password. If empty, a random 12-character password is generated and printed at startup. |
+
+On startup the script prints the access URL, username, and password to the console. Open the URL in a browser to use the UI.
