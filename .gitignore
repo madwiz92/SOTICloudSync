@@ -1,8 +1,5 @@
 # macOS
 .DS_Store
 
-# Debugging / scratch artifacts
-questionmark.png
-
 # Transfer temp files produced at runtime
 *.partial
