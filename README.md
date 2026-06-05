@@ -20,7 +20,35 @@ It serves a local directory (browse / upload / download / delete) and adds a sec
 - Must be run **as Administrator** (required to bind the HTTPS listener and the SSL certificate).
 - A certificate in `LocalMachine\My` or `CurrentUser\My` whose Subject or SAN matches one of the configured wildcard patterns.
 
-## Usage
+## Quick deploy (one-liner)
+
+The repo ships an `install.ps1` bootstrapper that self-elevates, ensures PowerShell 7 is installed, downloads the latest `WebFileServerSync.ps1`, and runs it. Paste this into **any** PowerShell on the target server (Windows PowerShell 5.1 or 7 — it handles the rest):
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\soticloudsync-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/SOTICloudSync/main/install.ps1 -OutFile $i -UseBasicParsing; & $i
+```
+
+Install it as an **auto-start scheduled task** (runs as SYSTEM at boot, logs to `%ProgramData%\SOTICloudSync\SOTICloudSync.log`) by adding `-AsTask`:
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; $i="$env:TEMP\soticloudsync-install.ps1"; iwr https://raw.githubusercontent.com/madwiz92/SOTICloudSync/main/install.ps1 -OutFile $i -UseBasicParsing; & $i -AsTask
+```
+
+### Installer options
+
+`install.ps1` forwards `-RootDirectory`, `-Port`, `-Username`, and `-Password` straight to the server, plus:
+
+| Parameter | Description |
+|---|---|
+| `-AsTask` | Register + start a scheduled task at boot instead of running in the console. |
+| `-NoStart` | Download/install only; don't launch. |
+| `-Uninstall` | Remove the scheduled task and install directory. |
+| `-Ref <branch\|tag>` | Pull from a specific branch or tag (default `main`). Pin to a tag for stable rollouts. |
+| `-InstallDir <path>` | Install location (default `%ProgramData%\SOTICloudSync`). |
+
+> For `-AsTask`, supply `-Password` (the task runs head-less, so a server-generated password would never be shown). If you omit it, the installer generates one and prints it once during install.
+
+## Usage (manual)
 
 ```powershell
 .\WebFileServerSync.ps1
