@@ -1165,6 +1165,39 @@ $RequestHandler = {
             return [long]$di.AvailableFreeSpace
         } catch { return $null }
     }
+    # Map a hostname to its cloud platform by the first letter of the short name
+    # (case-insensitive), after stripping an optional "C-" clone-environment prefix:
+    # S=AWS, A=Azure, anything else=unknown.
+    function Get-CloudCode {
+        param([string]$HostName)
+        if ([string]::IsNullOrWhiteSpace($HostName)) { return 'unknown' }
+        $h = ($HostName.Split('.')[0]).Trim().ToUpperInvariant()
+        if ($h.StartsWith('C-')) { $h = $h.Substring(2) }
+        if ($h.Length -eq 0) { return 'unknown' }
+        switch ($h[0]) {
+            'S' { 'aws' }
+            'A' { 'azure' }
+            default { 'unknown' }
+        }
+    }
+    # This server's primary private IPv4 (RFC1918) from its network interfaces, or $null.
+    function Get-PrivateIPv4 {
+        try {
+            foreach ($nic in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+                if ($nic.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) { continue }
+                if ($nic.NetworkInterfaceType -eq [System.Net.NetworkInformation.NetworkInterfaceType]::Loopback) { continue }
+                if ($nic.NetworkInterfaceType -eq [System.Net.NetworkInformation.NetworkInterfaceType]::Tunnel) { continue }
+                foreach ($ua in $nic.GetIPProperties().UnicastAddresses) {
+                    if ($ua.Address.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { continue }
+                    $b = $ua.Address.GetAddressBytes()
+                    if ($b[0] -eq 10) { return $ua.Address.ToString() }
+                    if ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) { return $ua.Address.ToString() }
+                    if ($b[0] -eq 192 -and $b[1] -eq 168) { return $ua.Address.ToString() }
+                }
+            }
+        } catch { }
+        return $null
+    }
     # Walk an exception chain and decide whether the failure was a TLS/certificate
     # validation error (name mismatch, untrusted CA, expired, etc.).
     function Test-CertError {
