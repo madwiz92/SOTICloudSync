@@ -450,6 +450,8 @@ $IndexHtml = @'
   .arrows { flex: 0 0 64px; display: flex; flex-direction: column; gap: 12px;
             align-items: center; justify-content: center; }
   .arrowbtn { font-size: 20px; width: 52px; height: 46px; line-height: 1; }
+  .cancelbtn { font-size: 13px; line-height: 1; padding: 8px 0; width: 52px;
+               display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
   .arrows .label { font-size: 10px; color: #9aa5b1; text-align: center; }
   .xfermsg { font-size: 11px; color: #616e7c; text-align: center; max-width: 64px; }
   @media (max-width: 920px) {
@@ -516,7 +518,7 @@ $IndexHtml = @'
             title="Copy selected Local files to Remote" disabled>&#8594;</button>
     <button class="btn arrowbtn" id="pullBtn" onclick="transfer('pull')"
             title="Copy selected Remote files to Local" disabled>&#8592;</button>
-    <button class="btn-danger arrowbtn" id="cancelBtn" onclick="cancelTransfer()"
+    <button class="btn-danger cancelbtn" id="cancelBtn" onclick="cancelTransfer()"
             title="Stop the current transfer" style="display:none">&#9632; Stop</button>
     <div class="xfermsg" id="xferMsg"></div>
   </div>
