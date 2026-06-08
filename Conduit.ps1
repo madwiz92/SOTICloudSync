@@ -468,6 +468,10 @@ $IndexHtml = @'
   .crumbs .note { color: #9aa5b1; }
   a.dirlink { color: #3b82f6; cursor: pointer; text-decoration: none; }
   a.dirlink:hover { text-decoration: underline; }
+  .fastbadge { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
+               cursor: pointer; margin-left: 6px; white-space: nowrap; }
+  .fastbadge.on  { background: #d1fae5; color: #057a55; }
+  .fastbadge.off { background: #eef1f4; color: #9aa5b1; }
 </style>
 </head>
 <body>
@@ -521,7 +525,8 @@ $IndexHtml = @'
   <div class="panel">
     <h2>
       <span class="left">Remote: <span class="hostname2" id="remoteHost">(not connected)</span>
-        <span class="meta" id="remoteSummary"></span></span>
+        <span class="meta" id="remoteSummary"></span>
+        <span class="fastbadge" id="fastBadge" style="display:none" onclick="toggleFast()"></span></span>
       <span class="acts" id="remoteActions" style="display:none">
         <button class="btn" id="remoteUploadBtn" onclick="pickUpload('remote')">&#11014; Upload</button>
         <button class="btn-light" onclick="loadRemote()" title="Refresh">&#8634;</button>
@@ -695,14 +700,61 @@ async function apiFetch(url, opts) {
 
 // ----- remote connection state --------------------------------------------
 function remoteCreds() {
+  // When the same-cloud private fast path is active, the effective pinned IP is the
+  // private IP; otherwise it's the base (public / DNS-fallback) pin, which may be ''.
+  const fast = sessionStorage.getItem('remoteFast') === '1';
+  const fastIp = sessionStorage.getItem('remoteFastIp') || '';
+  const baseIp = sessionStorage.getItem('remoteResolvedIp') || '';
   return {
     url: sessionStorage.getItem('remoteUrl'),
     password: sessionStorage.getItem('remotePass'),
     insecure: sessionStorage.getItem('remoteInsecure') === '1',
-    resolvedIp: sessionStorage.getItem('remoteResolvedIp') || ''
+    resolvedIp: (fast && fastIp) ? fastIp : baseIp
   };
 }
 function remoteConnected() { return !!sessionStorage.getItem('remoteUrl'); }
+
+// ----- same-cloud private fast path ----------------------------------------
+function renderFastBadge() {
+  const el = document.getElementById('fastBadge');
+  if (!el) return;
+  const ip = sessionStorage.getItem('remoteFastIp') || '';
+  if (!ip || !remoteConnected()) { el.style.display = 'none'; return; }
+  const on = sessionStorage.getItem('remoteFast') === '1';
+  el.style.display = '';
+  el.className = 'fastbadge ' + (on ? 'on' : 'off');
+  el.textContent = on ? '\u26A1 Private link' : 'Private link off';
+  el.title = on
+    ? 'Transferring over the private network (' + ip + ') \u2014 no egress. Click to use the public path.'
+    : 'A same-cloud private path is available (' + ip + '). Click to enable.';
+}
+function toggleFast() {
+  if (!sessionStorage.getItem('remoteFastIp')) return;
+  if (sessionStorage.getItem('remoteFast') === '1') sessionStorage.removeItem('remoteFast');
+  else sessionStorage.setItem('remoteFast', '1');
+  renderFastBadge();
+  loadRemote();
+}
+// After connecting, ask the broker whether a same-cloud private IP is reachable; if so,
+// pin it for the whole session (no egress) and re-list over it.
+async function checkFastPath() {
+  if (!remoteConnected()) return;
+  const c = remoteCreds();
+  try {
+    const res = await apiFetch('/remote/fastpath', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: c.url, password: c.password, insecure: c.insecure, resolvedIp: c.resolvedIp })
+    });
+    if (!res.ok) return;
+    const r = await res.json();
+    if (r && r.fast && r.privateIp) {
+      sessionStorage.setItem('remoteFastIp', r.privateIp);
+      sessionStorage.setItem('remoteFast', '1');
+      renderFastBadge();
+      loadRemote();
+    }
+  } catch (e) { /* best-effort; stay on the public path */ }
+}
 
 function connectRemote() {
   document.getElementById('connErr').textContent = '';
@@ -763,6 +815,7 @@ async function submitConnect() {
   sessionStorage.setItem('remoteUrl', url);
   sessionStorage.setItem('remotePass', pass);
   sessionStorage.removeItem('remoteInsecure');
+  sessionStorage.removeItem('remoteFast'); sessionStorage.removeItem('remoteFastIp');   // re-evaluate fast path
   paths.remote = ''; sessionStorage.removeItem('remotePath');   // start a fresh connection at root
 
   let result = await tryRemoteConnect(false);
@@ -799,12 +852,13 @@ async function submitConnect() {
     if (result !== 'ok') { err.textContent = 'Could not connect even after accepting the certificate.'; clearRemoteCreds(); return; }
   }
 
-  if (result === 'ok') { closeConnect(); setRemoteUi(true); updateArrows(); return; }
+  if (result === 'ok') { closeConnect(); setRemoteUi(true); updateArrows(); checkFastPath(); return; }
   err.textContent = 'Could not connect or authenticate to that server.';
   clearRemoteCreds();
 }
 function disconnectRemote() {
   sessionStorage.removeItem('remoteUrl'); sessionStorage.removeItem('remotePass'); sessionStorage.removeItem('remoteInsecure'); sessionStorage.removeItem('remoteResolvedIp'); sessionStorage.removeItem('remotePath');
+  sessionStorage.removeItem('remoteFast'); sessionStorage.removeItem('remoteFastIp');
   paths.remote = '';
   document.getElementById('remoteRows').innerHTML = '';
   document.getElementById('remoteHost').textContent = '(not connected)';
@@ -822,6 +876,7 @@ function setRemoteUi(connected) {
     const c = remoteCreds();
     try { document.getElementById('remoteHost').textContent = shortName(new URL(c.url).hostname); } catch (e) {}
   }
+  renderFastBadge();
 }
 
 // ----- rendering a file table ---------------------------------------------
@@ -1458,7 +1513,7 @@ $RequestHandler = {
 
     # --- remote (server-to-server) helpers ---------------------------------
     function New-RemoteClient {
-        param([string]$Password, [bool]$AllowInsecure, [string]$ResolvedIp)
+        param([string]$Password, [bool]$AllowInsecure, [string]$ResolvedIp, [int]$TimeoutSeconds = 0)
         Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
         try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
         # Strict TLS by default. $ResolvedIp pins the TCP connection to a browser-
@@ -1466,7 +1521,9 @@ $RequestHandler = {
         # TLS preserved). $AllowInsecure bypasses validation entirely (explicit consent).
         $handler = [ConduitHttp]::CreateHandler($ResolvedIp, $AllowInsecure)
         $client  = [System.Net.Http.HttpClient]::new($handler)
-        $client.Timeout = [TimeSpan]::FromHours(12)   # allow very large transfers
+        # Default: allow very large transfers. A short timeout is used for quick probes
+        # (e.g. the fast-path reachability check) so an unreachable IP fails fast.
+        $client.Timeout = if ($TimeoutSeconds -gt 0) { [TimeSpan]::FromSeconds($TimeoutSeconds) } else { [TimeSpan]::FromHours(12) }
         # Password-only auth: the username half is irrelevant (the peer ignores it),
         # so we send an empty username rather than a hardcoded "admin".
         $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(":$Password"))
@@ -1572,7 +1629,52 @@ $RequestHandler = {
             Send-Json $resp @{ free = (Get-FreeSpace $cfg.RootDirectory) } 200
             $status = 200
         }
+        elseif ($method -eq 'GET' -and $path -eq '/netinfo') {
+            # This server's identity for the same-cloud private-IP fast path.
+            $hn = [System.Net.Dns]::GetHostName()
+            Send-Json $resp @{ hostname = $hn; cloud = (Get-CloudCode $hn); privateIp = (Get-PrivateIPv4) } 200
+            $status = 200
+        }
         # ===== Remote (server-to-server) endpoints ==========================
+        elseif ($method -eq 'POST' -and $path -eq '/remote/fastpath') {
+            # Decide whether this broker can reach the peer over a same-cloud private IP.
+            $body = Read-BodyText $req | ConvertFrom-Json
+            $base = Get-RemoteBase $body.url
+            $localCloud = Get-CloudCode ([System.Net.Dns]::GetHostName())
+            $result = @{ fast = $false; reason = 'unknown-cloud' }
+            if ($localCloud -eq 'unknown') {
+                Send-Json $resp $result 200; $status = 200
+            } else {
+                $client = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure) -ResolvedIp ([string]$body.resolvedIp) -TimeoutSeconds 8
+                try {
+                    $info = $null
+                    try {
+                        $r = $client.GetAsync("$base/netinfo").GetAwaiter().GetResult()
+                        if ($r.IsSuccessStatusCode) {
+                            $info = $r.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+                        }
+                    } catch { }
+                    if ($null -eq $info) { $result = @{ fast = $false; reason = 'no-netinfo' } }
+                    elseif ([string]$info.cloud -ne $localCloud) { $result = @{ fast = $false; reason = 'different-cloud' } }
+                    elseif ([string]::IsNullOrWhiteSpace([string]$info.privateIp)) { $result = @{ fast = $false; reason = 'no-private-ip' } }
+                    else {
+                        # Reachability probe: dial the private IP (FQDN kept for TLS), short timeout.
+                        $probe = New-RemoteClient -Password $body.password -AllowInsecure ([bool]$body.insecure) -ResolvedIp ([string]$info.privateIp) -TimeoutSeconds 5
+                        try {
+                            $pr = $probe.GetAsync("$base/netinfo").GetAwaiter().GetResult()
+                            if ($pr.IsSuccessStatusCode) {
+                                $result = @{ fast = $true; privateIp = [string]$info.privateIp; cloud = $localCloud; remoteHost = [string]$info.hostname }
+                            } else {
+                                $result = @{ fast = $false; reason = 'unreachable' }
+                            }
+                        } catch {
+                            $result = @{ fast = $false; reason = 'unreachable' }
+                        } finally { $probe.Dispose() }
+                    }
+                } finally { $client.Dispose() }
+                Send-Json $resp $result 200; $status = 200
+            }
+        }
         elseif ($method -eq 'POST' -and $path -eq '/remote/list') {
             $body = Read-BodyText $req | ConvertFrom-Json
             $base = Get-RemoteBase $body.url
